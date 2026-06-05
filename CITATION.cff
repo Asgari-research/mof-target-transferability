@@ -1,0 +1,72 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite the associated manuscript and the ARC-MOF database paper."
+title: "MOF Target Transferability"
+type: software
+authors:
+  - family-names: Masoudi
+    given-names: Fatemeh
+  - family-names: Abaei
+    given-names: Shayan
+  - family-names: Alimardani
+    given-names: Hosein
+  - family-names: Fakhroleslam
+    given-names: Mohammad
+  - family-names: Eslami
+    given-names: Fatemeh
+  - family-names: Asgari
+    given-names: Mehrdad
+repository-code: "https://github.com/Asgari-research/mof-target-transferability"
+license: MIT
+version: "0.1.0"
+date-released: "2026-06-05"
+preferred-citation:
+  type: article
+  title: "Stable Models, Unstable Candidates: Target Transferability in MOF Machine Learning for Gas Uptake Prediction"
+  authors:
+    - family-names: Masoudi
+      given-names: Fatemeh
+    - family-names: Abaei
+      given-names: Shayan
+    - family-names: Alimardani
+      given-names: Hosein
+    - family-names: Fakhroleslam
+      given-names: Mohammad
+    - family-names: Eslami
+      given-names: Fatemeh
+    - family-names: Asgari
+      given-names: Mehrdad
+  year: 2026
+  notes: "Manuscript in preparation."
+references:
+  - type: article
+    title: "ARC-MOF: A Diverse Database of Metal-Organic Frameworks with DFT-Derived Partial Atomic Charges and Descriptors for Machine Learning"
+    authors:
+      - family-names: Burner
+        given-names: Jake
+      - family-names: Luo
+        given-names: Jun
+      - family-names: White
+        given-names: Andrew
+      - family-names: Mirmiran
+        given-names: Adam
+      - family-names: Kwon
+        given-names: Ohmin
+      - family-names: Boyd
+        given-names: Peter G.
+      - family-names: Maley
+        given-names: Stephen
+      - family-names: Gibaldi
+        given-names: Marco
+      - family-names: Simrod
+        given-names: Scott
+      - family-names: Ogden
+        given-names: Victoria
+      - family-names: Woo
+        given-names: Tom K.
+    journal: "Chemistry of Materials"
+    volume: 35
+    issue: 3
+    start: 900
+    end: 916
+    year: 2023
+    doi: "10.1021/acs.chemmater.2c02485"
