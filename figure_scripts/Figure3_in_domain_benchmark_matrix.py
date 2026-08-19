@@ -1,5 +1,5 @@
 """
-Figure 2: In-domain benchmark matrix
+Figure 3: In-domain benchmark matrix
 """
 
 import pandas as pd
@@ -227,8 +227,8 @@ def create_publication_figure(data_dir, output_dir):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    png_path = output_dir / "Figure2_in_domain_benchmark_matrix.png"
-    pdf_path = output_dir / "Figure2_in_domain_benchmark_matrix.pdf"
+    png_path = output_dir / "Figure3_in_domain_benchmark_matrix.png"
+    pdf_path = output_dir / "Figure3_in_domain_benchmark_matrix.pdf"
 
     safe_save_figure(fig, png_path, dpi=300, bbox_inches='tight', facecolor='white')
     safe_save_figure(fig, pdf_path, dpi=300, bbox_inches='tight', facecolor='white')
@@ -283,7 +283,7 @@ if __name__ == "__main__":
     print("✓ All completed!")
     print(f"  Output directory: {output_dir}")
     print("\nFiles created:")
-    print("  Figure2_in_domain_benchmark_matrix.png/pdf (main figure)")
+    print("  Figure3_in_domain_benchmark_matrix.png/pdf (main figure)")
     print("   R2_values_all_targets.csv (R² values)")
     print("=" * 70)
 
