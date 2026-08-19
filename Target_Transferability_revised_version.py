@@ -678,20 +678,79 @@ def summarize_in_domain_results(metrics_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def compute_rank_transportability(summary_df: pd.DataFrame):
-    pivot = summary_df.pivot_table(index="config_name", columns="target_key", values="r2_mean", aggfunc="mean")
+
+    # ---------------------------------------------------------
+    # Primary rank-transferability analysis:
+    # exclude descriptor-specific Dummy Mean baselines
+    # ---------------------------------------------------------
+    rank_input = summary_df.loc[
+        summary_df["model_name"] != "dummy_mean"
+    ].copy()
+
+    # Audit: should be 12 trainable configurations per target
+    config_counts = (
+        rank_input.groupby("target_key")["config_name"]
+        .nunique()
+    )
+
+    if not (config_counts == 12).all():
+        raise ValueError(
+            "Rank-transferability must contain exactly "
+            f"12 trainable configurations per target. Got:\n{config_counts}"
+        )
+
+    pivot = rank_input.pivot_table(
+        index="config_name",
+        columns="target_key",
+        values="r2_mean",
+        aggfunc="mean"
+    )
+
     target_keys = list(pivot.columns)
 
     rows = []
-    mat = pd.DataFrame(index=target_keys, columns=target_keys, dtype=float)
+    mat = pd.DataFrame(
+        index=target_keys,
+        columns=target_keys,
+        dtype=float
+    )
+
     for a in target_keys:
         for b in target_keys:
             rho = safe_spearman(pivot[a], pivot[b])
             mat.loc[a, b] = rho
-            rows.append({"target_a": a, "target_b": b, "rank_spearman_r2": rho})
+
+            rows.append({
+                "target_a": a,
+                "target_b": b,
+                "rank_spearman_r2": rho,
+                "n_configurations": len(pivot),
+            })
 
     corr_df = pd.DataFrame(rows)
-    save_dataframe(corr_df, PATHS["tables"] / "table_3a_cross_target_rank_transportability", index=False)
-    save_dataframe(mat.reset_index().rename(columns={"index": "target_key"}), PATHS["tables"] / "table_3a_rank_transportability_matrix", index=False)
+
+    save_dataframe(
+        corr_df,
+        PATHS["tables"] /
+        "table_3a_cross_target_rank_transportability",
+        index=False
+    )
+
+    save_dataframe(
+        mat.reset_index().rename(columns={"index": "target_key"}),
+        PATHS["tables"] /
+        "table_3a_rank_transportability_matrix",
+        index=False
+    )
+
+    # save explicit audit input
+    save_dataframe(
+        rank_input,
+        PATHS["tables"] /
+        "rank_transportability_12_trainable_configs",
+        index=False
+    )
+
     return corr_df, mat
 
 
@@ -707,31 +766,100 @@ def collect_best_predictions(preds_df: pd.DataFrame, best_df: pd.DataFrame) -> p
     return merged
 
 
-def compute_residual_transportability(best_preds_df: pd.DataFrame):
-    agg = best_preds_df.groupby([ID_COL, "target_key"], as_index=False).agg(mean_abs_error=("abs_error", "mean"), mean_residual=("residual", "mean"), mean_pred=("y_pred", "mean"), mean_true=("y_true", "mean"))
-    wide = agg.pivot(index=ID_COL, columns="target_key", values="mean_abs_error")
+def compute_residual_transportability(
+    preds_df: pd.DataFrame,
+    analysis_tag: str = "primary"
+):
+    agg = (
+        preds_df
+        .groupby([ID_COL, "target_key"], as_index=False)
+        .agg(
+            mean_abs_error=("abs_error", "mean"),
+            mean_residual=("residual", "mean"),
+            mean_pred=("y_pred", "mean"),
+            mean_true=("y_true", "mean"),
+        )
+    )
+
+    wide = agg.pivot(
+        index=ID_COL,
+        columns="target_key",
+        values="mean_abs_error"
+    )
+
     target_keys = list(wide.columns)
+
     rows = []
-    mat = pd.DataFrame(index=target_keys, columns=target_keys, dtype=float)
+
+    mat = pd.DataFrame(
+        index=target_keys,
+        columns=target_keys,
+        dtype=float
+    )
+
     for a in target_keys:
         for b in target_keys:
-            rho = safe_spearman(wide[a], wide[b])
+
+            # Diagonal must be exactly 1
+            if a == b:
+                n_shared = int(wide[a].notna().sum())
+                rho = 1.0
+
+            else:
+                pair = wide[[a, b]].dropna()
+
+                n_shared = int(len(pair))
+
+                if n_shared > 1:
+                    rho = safe_spearman(
+                        pair[a].values,
+                        pair[b].values
+                    )
+                else:
+                    rho = np.nan
+
             mat.loc[a, b] = rho
-            rows.append({"target_a": a, "target_b": b, "residual_abs_spearman": rho})
+
+            rows.append({
+                "analysis_tag": analysis_tag,
+                "target_a": a,
+                "target_b": b,
+                "residual_abs_spearman": rho,
+                "n_shared_structures": n_shared,
+            })
+
     residual_df = pd.DataFrame(rows)
-    save_dataframe(residual_df, PATHS["tables"] / "table_3b_residual_transportability", index=False)
-    save_dataframe(mat.reset_index().rename(columns={"index": "target_key"}), PATHS["tables"] / "table_3b_residual_transportability_matrix", index=False)
+
+    save_dataframe(
+        residual_df,
+        PATHS["tables"]
+        / f"table_residual_transportability_{analysis_tag}",
+        index=False
+    )
+    if "sensitivity" in analysis_tag:
+        output_table_dir = PATHS["tables_si"]
+    else:
+        output_table_dir = PATHS["tables"]
+
+    save_dataframe(
+        residual_df,
+        output_table_dir
+        / f"table_residual_transportability_{analysis_tag}",
+        index=False
+    )
+
     return residual_df, mat
 
-
-def standardize_target(y_train: np.ndarray, y_other: np.ndarray):
+def standardize_train_only(y_train: np.ndarray):
     mu = float(np.mean(y_train))
     sigma = float(np.std(y_train))
+
     if sigma < EPS:
         sigma = 1.0
 
-    return (y_train - mu) / sigma, (y_other - mu) / sigma, mu, sigma
+    y_train_std = (y_train - mu) / sigma
 
+    return y_train_std, mu, sigma
 
 def build_preprocessed_arrays(X_train, X_test, numeric_cols, categorical_cols):
     pre = make_preprocessor(numeric_cols, categorical_cols)
@@ -740,11 +868,93 @@ def build_preprocessed_arrays(X_train, X_test, numeric_cols, categorical_cols):
     return pre, Xt_train, Xt_test
 
 
+CALIBRATION_STD_TOL = 1e-12
 
 def run_transfer_experiments(common_df, families, splits):
+
     out_path = PATHS["metrics"] / "transfer_metrics.csv"
+
     existing = load_existing_csv(out_path)
-    done_keys = set(existing["cache_key"]) if not existing.empty and "cache_key" in existing.columns else set()
+
+    # ---------------------------------------------------------
+    # METHOD FIX:
+    # Remove ONLY legacy direct_transport rows.
+    # Keep corrected predmoment_v2 rows if this is a resumed run.
+    # ---------------------------------------------------------
+
+    if (
+        not existing.empty
+        and "cache_key" in existing.columns
+        and "transfer_variant" in existing.columns
+    ):
+
+        is_direct = (
+            existing["transfer_variant"]
+            .astype(str)
+            .eq("direct_transport")
+        )
+
+        is_corrected_v2 = (
+            existing["cache_key"]
+            .astype(str)
+            .str.endswith(
+                "__direct_transport_predmoment_v2"
+            )
+        )
+
+        legacy_direct_mask = (
+            is_direct
+            & ~is_corrected_v2
+        )
+
+        if legacy_direct_mask.any():
+
+            n_legacy = int(
+                legacy_direct_mask.sum()
+            )
+
+            LOGGER.log(
+                f"Removing {n_legacy} legacy "
+                f"direct_transport rows before corrected rerun."
+            )
+
+            # Backup OLD transfer metrics only once
+            backup_path = (
+                PATHS["metrics"]
+                / "transfer_metrics_before_predmoment_fix.csv"
+            )
+
+            if not backup_path.exists():
+                existing.to_csv(
+                    backup_path,
+                    index=False,
+                )
+
+            # Remove old direct-transport results
+            existing = existing.loc[
+                ~legacy_direct_mask
+            ].copy()
+
+            # Extra protection against duplicate cache keys
+            existing = existing.drop_duplicates(
+                subset=["cache_key"],
+                keep="last",
+            )
+
+            existing.to_csv(
+                out_path,
+                index=False,
+            )
+
+    # Build cache AFTER removing legacy direct results
+    done_keys = (
+        set(existing["cache_key"])
+        if (
+            not existing.empty
+            and "cache_key" in existing.columns
+        )
+        else set()
+    )
     candidate_families = ["enriched_interpretable"] + (["enriched_plus_topology"] if "enriched_plus_topology" in families else [])
 
     total_expected = len(candidate_families) * len(splits) * (len(TARGETS) + len(TARGETS) * (len(TARGETS) - 1) * 3)
@@ -772,9 +982,12 @@ def run_transfer_experiments(common_df, families, splits):
             mt_expected_keys = {f"{mt_ck_prefix}__{target_key}" for target_key in TARGETS}
 
             #--------------------------------------------------------------------------------
-            # Independent multi‑output baseline
+            # Independent per-target HGB reference baseline
             if not mt_expected_keys.issubset(done_keys):
-                LOGGER.log(f"    Running supplementary multi-target model: {mt_ck_prefix}")
+                LOGGER.log(
+                    f"    Running independent per-target HGB reference: "
+                    f"{mt_ck_prefix}"
+                )
                 t_mt = time.time()
                 y_train_mt = common_df.iloc[train_idx][list(TARGETS.values())].values
                 y_test_mt = common_df.iloc[test_idx][list(TARGETS.values())].values
@@ -806,7 +1019,7 @@ def run_transfer_experiments(common_df, families, splits):
                             "split_id": split.split_id,
                             "source_target": "all_targets_joint",
                             "target_target": target_key,
-                            "transfer_variant": "independent_multi_output",
+                            "transfer_variant": "independent_per_target_hgb",
                             **m,
                         }
                     )
@@ -834,7 +1047,9 @@ def run_transfer_experiments(common_df, families, splits):
                         y_train_t = common_df.iloc[train_idx][target_col].values
                         y_test_t = common_df.iloc[test_idx][target_col].values
                         _, Xt_train, Xt_test = build_preprocessed_arrays(X_train, X_test, numeric_cols, categorical_cols)
-                        y_train_t_std, _, mu_t, sigma_t = standardize_target(y_train_t, y_test_t)
+                        y_train_t_std, mu_t, sigma_t = standardize_train_only(
+                            y_train_t
+                        )
                         scratch_model = MLPRegressor(
                             hidden_layer_sizes=MLP_HIDDEN_LAYERS,
                             activation="relu",
@@ -866,16 +1081,55 @@ def run_transfer_experiments(common_df, families, splits):
                     else:
                         LOGGER.log(f"      Skipping completed scratch baseline: {scratch_ck}")
 
+                    # ------------------------------------------------------------
+                    # direct transfer:
+                    # calibration from SOURCE-MODEL TRAIN predictions
+                    # ------------------------------------------------------------
 
-                    # ----- Direct transport (source model applied to target without adaptation)
-                    direct_ck = ck_base + "__direct_transport"
+                    direct_ck = ck_base + "__direct_transport_predmoment_v2"
+
                     if direct_ck not in done_keys:
-                        LOGGER.log(f"      Direct transport: {direct_ck}")
+
+                        LOGGER.log(f"      Direct transfer: {direct_ck}")
                         t0 = time.time()
+
+                        # --------------------------------------------------------
+                        # 1. Labels
+                        # --------------------------------------------------------
+
+                        # SOURCE labels: TRAIN fold only
                         y_train_s = common_df.iloc[train_idx][source_col].values
+
+                        # TARGET labels: TRAIN fold only for calibration
+                        y_train_t = common_df.iloc[train_idx][target_col].values
+
+                        # TARGET TEST labels are used ONLY for final evaluation
                         y_test_t = common_df.iloc[test_idx][target_col].values
-                        _, Xt_train, Xt_test = build_preprocessed_arrays(X_train, X_test, numeric_cols, categorical_cols)
-                        y_train_s_std, _, _, _ = standardize_target(y_train_s, y_test_t)
+
+                        # --------------------------------------------------------
+                        # 2. Preprocessing
+                        # fitted only on X_train
+                        # --------------------------------------------------------
+
+                        _, Xt_train, Xt_test = build_preprocessed_arrays(
+                            X_train,
+                            X_test,
+                            numeric_cols,
+                            categorical_cols,
+                        )
+
+                        # --------------------------------------------------------
+                        # 3. Standardize SOURCE TRAIN labels only
+                        # --------------------------------------------------------
+
+                        y_train_s_std, mu_s_train, sigma_s_train = (
+                            standardize_train_only(y_train_s)
+                        )
+
+                        # --------------------------------------------------------
+                        # 4. Fit source model
+                        # --------------------------------------------------------
+
                         direct_model = MLPRegressor(
                             hidden_layer_sizes=MLP_HIDDEN_LAYERS,
                             activation="relu",
@@ -887,29 +1141,211 @@ def run_transfer_experiments(common_df, families, splits):
                             n_iter_no_change=15,
                             random_state=RANDOM_STATE,
                         )
-                        direct_model.fit(Xt_train, y_train_s_std)
-                        y_train_t = common_df.iloc[train_idx][target_col].values
-                        mu_t = float(np.mean(y_train_t))
-                        sigma_t = float(np.std(y_train_t))
-                        sigma_t = sigma_t if sigma_t > EPS else 1.0
-                        pred = direct_model.predict(Xt_test) * sigma_t + mu_t
-                        m = metric_bundle(y_test_t, pred)
+
+                        direct_model.fit(
+                            Xt_train,
+                            y_train_s_std,
+                        )
+
+                        # --------------------------------------------------------
+                        # 5. SOURCE-MODEL predictions on TRAIN and TEST
+                        # --------------------------------------------------------
+
+                        z_train_std = direct_model.predict(Xt_train)
+                        z_test_std = direct_model.predict(Xt_test)
+
+                        # Return source-model outputs to original SOURCE scale
+                        z_train = (
+                                z_train_std * sigma_s_train
+                                + mu_s_train
+                        )
+
+                        z_test = (
+                                z_test_std * sigma_s_train
+                                + mu_s_train
+                        )
+
+                        # --------------------------------------------------------
+                        # 6. Moments of SOURCE-MODEL TRAIN predictions
+                        # THIS is the methodological correction
+                        # --------------------------------------------------------
+
+                        mu_zs_train = float(
+                            np.mean(z_train)
+                        )
+
+                        sigma_zs_train = float(
+                            np.std(z_train)
+                        )
+
+                        # --------------------------------------------------------
+                        # 7. TARGET statistics: TRAIN fold ONLY
+                        # --------------------------------------------------------
+
+                        mu_t_train = float(
+                            np.mean(y_train_t)
+                        )
+
+                        sigma_t_train = float(
+                            np.std(y_train_t)
+                        )
+
+                        # --------------------------------------------------------
+                        # 8. Corrected mean-SD calibration
+                        # --------------------------------------------------------
+
+                        if sigma_zs_train <= CALIBRATION_STD_TOL:
+
+                            calibration_status = (
+                                "degenerate_source_prediction_std"
+                            )
+
+                            # Do not divide by an unstable SD.
+                            # Safe fallback: target-training mean.
+                            pred_calibrated = np.full(
+                                shape=len(z_test),
+                                fill_value=mu_t_train,
+                                dtype=float,
+                            )
+
+                        else:
+
+                            calibration_status = "ok"
+
+                            pred_calibrated = (
+                                    mu_t_train
+                                    + (
+                                            sigma_t_train
+                                            / sigma_zs_train
+                                    )
+                                    * (
+                                            z_test
+                                            - mu_zs_train
+                                    )
+                            )
+
+                        # --------------------------------------------------------
+                        # 9. Evaluation
+                        # y_test_t appears for the FIRST TIME in the metric step
+                        # --------------------------------------------------------
+
+                        m = metric_bundle(
+                            y_test_t,
+                            pred_calibrated,
+                        )
+
+                        # --------------------------------------------------------
+                        # 10. Save calibration audit information
+                        # --------------------------------------------------------
+
                         append_row_csv(
                             out_path,
                             {
                                 "cache_key": direct_ck,
                                 "family_name": family_name,
                                 "split_id": split.split_id,
+                                "seed": split.seed,
+
                                 "source_target": source_key,
                                 "target_target": target_key,
+
                                 "transfer_variant": "direct_transport",
+
+                                # Source-label scaling used for MLP training
+                                "mu_source_label_train": mu_s_train,
+                                "sigma_source_label_train": sigma_s_train,
+
+                                # IMPORTANT: model-prediction moments
+                                "mu_source_prediction_train": mu_zs_train,
+                                "sigma_source_prediction_train": sigma_zs_train,
+
+                                # Target TRAIN moments only
+                                "mu_target_label_train": mu_t_train,
+                                "sigma_target_label_train": sigma_t_train,
+
+                                "calibration_std_tolerance": CALIBRATION_STD_TOL,
+                                "calibration_status": calibration_status,
+
+                                "n_train": int(len(train_idx)),
+                                "n_test": int(len(test_idx)),
+
                                 **m,
                             },
                         )
+
+                        # --------------------------------------------------------
+                        # 11. Save raw + calibrated prediction-level records
+                        # --------------------------------------------------------
+
+                        direct_pred_df = pd.DataFrame(
+                            {
+                                ID_COL:
+                                    common_df.iloc[test_idx][ID_COL].values,
+
+                                "split_id":
+                                    split.split_id,
+
+                                "source_target":
+                                    source_key,
+
+                                "target_target":
+                                    target_key,
+
+                                "descriptor_family":
+                                    family_name,
+
+                                "transfer_variant":
+                                    "direct_transport",
+
+                                "y_true_target":
+                                    y_test_t,
+
+                                # raw prediction from source model,
+                                # on original source-target scale
+                                "raw_source_prediction":
+                                    z_test,
+
+                                # final prediction after target calibration
+                                "calibrated_target_prediction":
+                                    pred_calibrated,
+
+                                "calibration_status":
+                                    calibration_status,
+                            }
+                        )
+
+                        direct_pred_path = (
+                                PATHS["predictions"]
+                                / "direct_transfer"
+                                / f"{sanitize_name(direct_ck)}.csv"
+                        )
+
+                        ensure_dir(
+                            direct_pred_path.parent
+                        )
+
+                        direct_pred_df.to_csv(
+                            direct_pred_path,
+                            index=False,
+                        )
+
                         done_keys.add(direct_ck)
-                        LOGGER.log(f"        Done in {fmt_elapsed(time.time() - t0)} | R2={m['r2']:.4f}, RMSE={m['rmse']:.4f}")
+
+                        LOGGER.log(
+                            f"        Done in "
+                            f"{fmt_elapsed(time.time() - t0)} | "
+                            f"R2={m['r2']:.4f}, "
+                            f"RMSE={m['rmse']:.4f}, "
+                            f"sigma_z_train={sigma_zs_train:.6g}, "
+                            f"calibration={calibration_status}"
+                        )
+
                     else:
-                        LOGGER.log(f"      Skipping completed direct transport: {direct_ck}")
+
+                        LOGGER.log(
+                            f"      Skipping completed direct transfer: "
+                            f"{direct_ck}"
+                        )
 
                     # ----- Pretrain on source, finetune on target (warm_start)
                     finetune_ck = ck_base + "__pretrain_finetune"
@@ -920,8 +1356,11 @@ def run_transfer_experiments(common_df, families, splits):
                         y_train_t = common_df.iloc[train_idx][target_col].values
                         y_test_t = common_df.iloc[test_idx][target_col].values
                         _, Xt_train, Xt_test = build_preprocessed_arrays(X_train, X_test, numeric_cols, categorical_cols)
-                        y_train_s_std, _, _, _ = standardize_target(y_train_s, y_test_t)
-                        y_train_t_std, _, mu_t, sigma_t = standardize_target(y_train_t, y_test_t)
+                        y_train_s_std, _, _ = standardize_train_only(y_train_s)
+
+                        y_train_t_std, mu_t, sigma_t = standardize_train_only(
+                            y_train_t
+                        )
                         model = MLPRegressor(
                             hidden_layer_sizes=MLP_HIDDEN_LAYERS,
                             activation="relu",
@@ -961,14 +1400,80 @@ def run_transfer_experiments(common_df, families, splits):
     LOGGER.log(f"Completed transfer experiments. Rows in transfer metrics={len(transfer_df):,}")
     return transfer_df
 
-def summarize_transfer_results(transfer_df: pd.DataFrame) -> pd.DataFrame:
+def summarize_transfer_results(
+    transfer_df: pd.DataFrame
+) -> pd.DataFrame:
+
     if transfer_df.empty:
         return transfer_df
 
-    summary = transfer_df.groupby(["family_name", "source_target", "target_target", "transfer_variant"], as_index=False).agg(
-        rmse_mean=("rmse", "mean"), rmse_std=("rmse", "std"), mae_mean=("mae", "mean"), mae_std=("mae", "std"),
-        r2_mean=("r2", "mean"), r2_std=("r2", "std"), spearman_mean=("spearman", "mean"), spearman_std=("spearman", "std"), n_splits=("split_id", "nunique"),
+    transfer_df = transfer_df.copy()
+
+    # ---------------------------------------------------------
+    # SAFETY FILTER:
+    # For direct_transport, use ONLY corrected predmoment_v2.
+    # Legacy direct_transport rows can never enter averages.
+    # ---------------------------------------------------------
+
+    if (
+        "cache_key" in transfer_df.columns
+        and "transfer_variant" in transfer_df.columns
+    ):
+
+        is_direct = (
+            transfer_df["transfer_variant"]
+            .astype(str)
+            .eq("direct_transport")
+        )
+
+        is_corrected_v2 = (
+            transfer_df["cache_key"]
+            .astype(str)
+            .str.endswith(
+                "__direct_transport_predmoment_v2"
+            )
+        )
+
+        transfer_df = transfer_df.loc[
+            (~is_direct)
+            | is_corrected_v2
+        ].copy()
+
+        # One result per cache key
+        transfer_df = (
+            transfer_df
+            .drop_duplicates(
+                subset=["cache_key"],
+                keep="last",
+            )
+            .reset_index(drop=True)
+        )
+
+    # ---------------------------------------------------------
+    # Summary
+    # ---------------------------------------------------------
+
+    summary = transfer_df.groupby(
+        [
+            "family_name",
+            "source_target",
+            "target_target",
+            "transfer_variant",
+        ],
+        as_index=False,
+    ).agg(
+        rmse_mean=("rmse", "mean"),
+        rmse_std=("rmse", "std"),
+        mae_mean=("mae", "mean"),
+        mae_std=("mae", "std"),
+        r2_mean=("r2", "mean"),
+        r2_std=("r2", "std"),
+        spearman_mean=("spearman", "mean"),
+        spearman_std=("spearman", "std"),
+        n_splits=("split_id", "nunique"),
     )
+
+
 
     scratch = summary[summary["transfer_variant"] == "scratch_target"].copy().rename(columns={"rmse_mean": "rmse_scratch",
                                                                                               "mae_mean": "mae_scratch",
@@ -977,46 +1482,175 @@ def summarize_transfer_results(transfer_df: pd.DataFrame) -> pd.DataFrame:
                                                                                               })[["family_name", "source_target", "target_target",
                                                                                              "rmse_scratch", "mae_scratch", "r2_scratch", "spearman_scratch"]]
 
-    merged = summary.merge(scratch, on=["family_name", "source_target", "target_target"], how="left")
-    merged["delta_rmse_vs_scratch"] = merged["rmse_mean"] - merged["rmse_scratch"]
-    merged["delta_mae_vs_scratch"] = merged["mae_mean"] - merged["mae_scratch"]
-    merged["delta_r2_vs_scratch"] = merged["r2_mean"] - merged["r2_scratch"]
-    merged["delta_spearman_vs_scratch"] = merged["spearman_mean"] - merged["spearman_scratch"]
+    merged = summary.merge(
+        scratch,
+        on=["family_name", "source_target", "target_target"],
+        how="left"
+    )
 
-    save_dataframe(merged, PATHS["tables"] / "table_4_transfer_gain_loss", index=False)
+    merged["delta_rmse_vs_scratch"] = (
+            merged["rmse_mean"] - merged["rmse_scratch"]
+    )
+
+    merged["delta_mae_vs_scratch"] = (
+            merged["mae_mean"] - merged["mae_scratch"]
+    )
+
+    merged["delta_r2_vs_scratch"] = (
+            merged["r2_mean"] - merged["r2_scratch"]
+    )
+
+    merged["delta_spearman_vs_scratch"] = (
+            merged["spearman_mean"] - merged["spearman_scratch"]
+    )
+
+    # ---------------------------------------------------------
+    # Independent per-target HGB is a reference baseline,
+    # not a pairwise transfer method.
+    # Therefore delta-vs-scratch is intentionally undefined.
+    # ---------------------------------------------------------
+
+    hgb_mask = (
+            merged["transfer_variant"]
+            == "independent_per_target_hgb"
+    )
+
+    delta_cols = [
+        "delta_rmse_vs_scratch",
+        "delta_mae_vs_scratch",
+        "delta_r2_vs_scratch",
+        "delta_spearman_vs_scratch",
+    ]
+
+    merged.loc[hgb_mask, delta_cols] = np.nan
+
+    save_dataframe(
+        merged,
+        PATHS["tables"] / "table_4_transfer_gain_loss",
+        index=False
+    )
+
     return merged
 
 
-def compute_elite_retrieval_overlap(best_preds_df: pd.DataFrame):
-    agg = best_preds_df.groupby([ID_COL, "target_key"], as_index=False).agg(mean_pred=("y_pred", "mean"), mean_true=("y_true", "mean"))
-    pred_wide = agg.pivot(index=ID_COL, columns="target_key", values="mean_pred")
-    true_wide = agg.pivot(index=ID_COL, columns="target_key", values="mean_true")
+def compute_elite_retrieval_overlap(
+    preds_df: pd.DataFrame,
+    analysis_tag: str = "primary"
+):
+    agg = (
+        preds_df
+        .groupby([ID_COL, "target_key"], as_index=False)
+        .agg(
+            mean_pred=("y_pred", "mean"),
+            mean_true=("y_true", "mean"),
+        )
+    )
+
+    pred_wide = agg.pivot(
+        index=ID_COL,
+        columns="target_key",
+        values="mean_pred"
+    )
+
+    true_wide = agg.pivot(
+        index=ID_COL,
+        columns="target_key",
+        values="mean_true"
+    )
+
     n = len(pred_wide)
-    top_k = max(TOP_K_MIN, int(math.ceil(TOP_K_FRACTION * n)))
-    LOGGER.log(f"Elite retrieval overlap uses top_k={top_k} out of n={n}")
+
+    top_k = max(
+        TOP_K_MIN,
+        int(math.ceil(TOP_K_FRACTION * n))
+    )
+
+    LOGGER.log(
+        f"Elite retrieval overlap [{analysis_tag}] "
+        f"uses top_k={top_k} out of n={n}"
+    )
 
     targets = list(pred_wide.columns)
+
     rows = []
-    matrix = pd.DataFrame(index=targets, columns=targets, dtype=float)
+
+    matrix = pd.DataFrame(
+        index=targets,
+        columns=targets,
+        dtype=float
+    )
 
     for a in targets:
-        pred_top_a = set(pred_wide[a].nlargest(top_k).index)
+
+        pred_top_a = set(
+            pred_wide[a]
+            .dropna()
+            .nlargest(top_k)
+            .index
+        )
+
         for b in targets:
-            pred_top_b = set(pred_wide[b].nlargest(top_k).index)
+
+            pred_top_b = set(
+                pred_wide[b]
+                .dropna()
+                .nlargest(top_k)
+                .index
+            )
+
             inter = len(pred_top_a & pred_top_b)
             union = len(pred_top_a | pred_top_b)
-            jacc = inter / union if union else np.nan
+
+            jacc = (
+                inter / union
+                if union
+                else np.nan
+            )
+
             matrix.loc[a, b] = jacc
 
-            true_top_b = set(true_wide[b].nlargest(top_k).index)
+            true_top_b = set(
+                true_wide[b]
+                .dropna()
+                .nlargest(top_k)
+                .index
+            )
 
-            # precision: among top‑k predicted for A, how many are actually in top‑k true for B
-            precision = len(pred_top_a & true_top_b) / max(len(pred_top_a), 1)
-            rows.append({"target_a": a, "target_b": b, "predicted_topk_jaccard": jacc, "precision_topA_against_trueTopB": precision, "top_k": top_k})
+            precision = (
+                len(pred_top_a & true_top_b)
+                / max(len(pred_top_a), 1)
+            )
+
+            rows.append(
+                {
+                    "analysis_tag": analysis_tag,
+                    "target_a": a,
+                    "target_b": b,
+                    "predicted_topk_jaccard": jacc,
+                    "precision_topA_against_trueTopB": precision,
+                    "top_k": top_k,
+                    "n_union_structures": n,
+                }
+            )
 
     df = pd.DataFrame(rows)
-    save_dataframe(df, PATHS["tables"] / "table_elite_overlap_summary", index=False)
-    save_dataframe(matrix.reset_index().rename(columns={"index": "target_key"}), PATHS["tables"] / "table_elite_overlap_matrix", index=False)
+
+    save_dataframe(
+        df,
+        PATHS["tables"]
+        / f"table_elite_overlap_summary_{analysis_tag}",
+        index=False
+    )
+
+    save_dataframe(
+        matrix
+        .reset_index()
+        .rename(columns={"index": "target_key"}),
+        PATHS["tables"]
+        / f"table_elite_overlap_matrix_{analysis_tag}",
+        index=False
+    )
+
     return df, matrix
 
 
@@ -1197,19 +1831,19 @@ def run_descriptor_regime_analysis(common_df: pd.DataFrame, families: Dict[str, 
     )
     return result
 
-def make_figure_7_descriptor_regimes(regime_result: Dict[str, Any]):
+def make_figure_8_descriptor_regimes(regime_result: Dict[str, Any]):
     if not regime_result:
         return
     proj = regime_result["projection"].copy()
     load = regime_result["top_loadings"].copy().iloc[::-1]
     ev = regime_result["explained_variance_ratio"]
 
-    save_figure_source(proj, PATHS["figure_data_main"] / "Figure7_descriptor_pca_projection")
-    save_figure_source(regime_result["loadings"].copy(), PATHS["figure_data_main"] / "Figure7_descriptor_pca_all_loadings")
-    save_figure_source(load.copy().reset_index(drop=True), PATHS["figure_data_main"] / "Figure7_descriptor_pca_top_loadings")
+    save_figure_source(proj, PATHS["figure_data_main"] / "Figure8_descriptor_pca_projection")
+    save_figure_source(regime_result["loadings"].copy(), PATHS["figure_data_main"] / "Figure8_descriptor_pca_all_loadings")
+    save_figure_source(load.copy().reset_index(drop=True), PATHS["figure_data_main"] / "Figure8_descriptor_pca_top_loadings")
     save_figure_source(
         pd.DataFrame({"component": ["PC1", "PC2"], "explained_variance_ratio": ev[:2]}),
-        PATHS["figure_data_main"] / "Figure7_descriptor_pca_explained_variance",
+        PATHS["figure_data_main"] / "Figure8_descriptor_pca_explained_variance",
     )
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.5), gridspec_kw={"width_ratios": [1.45, 1.0]})
@@ -1240,9 +1874,9 @@ def make_figure_7_descriptor_regimes(regime_result: Dict[str, Any]):
     axes[1].set_title("Top descriptor loadings")
     axes[1].legend()
 
-    fig.suptitle("Figure 7. Descriptor-space PCA and dominant geometric drivers", y=1.02, fontsize=14)
+    fig.suptitle("Figure 8. Descriptor-space PCA and dominant geometric drivers", y=1.02, fontsize=14)
     fig.tight_layout()
-    maybe_save_figure(fig, PATHS["figures_main"] / "Figure7_descriptor_pca_map")
+    maybe_save_figure(fig, PATHS["figures_main"] / "Figure8_descriptor_pca_map")
 
 
 def make_si_descriptor_regime_figures(regime_result: Dict[str, Any]):
@@ -1347,7 +1981,7 @@ def make_figure_1_relationship_map(common_df: pd.DataFrame):
     maybe_save_figure(fig2, PATHS["figures_si"] / "FigureS1_target_distributions")
 
 
-def make_figure_2_benchmark_matrix(summary_df: pd.DataFrame):
+def make_figure_3_benchmark_matrix(summary_df: pd.DataFrame):
     summary_df = summary_df.copy()
     summary_df["config"] = summary_df["descriptor_family"] + "\n" + summary_df["model_name"]
     targets = list(summary_df["target_key"].unique())
@@ -1371,7 +2005,7 @@ def make_figure_2_benchmark_matrix(summary_df: pd.DataFrame):
         "rank_rmse",
         "rank_spearman",
     ]
-    save_figure_source(summary_df[export_cols], PATHS["figure_data_main"] / "Figure2_in_domain_benchmark_matrix_source")
+    save_figure_source(summary_df[export_cols], PATHS["figure_data_main"] / "Figure3_in_domain_benchmark_matrix_source")
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 9))
     axes = axes.flatten()
@@ -1382,9 +2016,9 @@ def make_figure_2_benchmark_matrix(summary_df: pd.DataFrame):
         ax.invert_yaxis()
         ax.set_title(t)
         ax.set_xlabel("Mean test $R^2$")
-    fig.suptitle("Figure 2. In-domain benchmark matrix", y=1.02, fontsize=14)
+    fig.suptitle("Figure 3. In-domain benchmark matrix", y=1.02, fontsize=14)
     fig.tight_layout()
-    maybe_save_figure(fig, PATHS["figures_main"] / "Figure2_in_domain_benchmark_matrix")
+    maybe_save_figure(fig, PATHS["figures_main"] / "Figure3_in_domain_benchmark_matrix")
 
     pivot_r2 = summary_df.pivot_table(index="config", columns="target_key", values="r2_mean", aggfunc="mean")
     pivot_rmse = summary_df.pivot_table(index="config", columns="target_key", values="rmse_mean", aggfunc="mean")
@@ -1401,24 +2035,138 @@ def make_figure_2_benchmark_matrix(summary_df: pd.DataFrame):
     fig2.tight_layout()
     maybe_save_figure(fig2, PATHS["figures_si"] / "FigureS2_benchmark_heatmaps")
 
+def make_figure_2_model_comparison(summary_df: pd.DataFrame):
+    """
+    Figure 2: Model performance comparison across adsorption targets.
+    Panel a: Mean test R2 (heatmap)
+    Panel b: Mean test RMSE (heatmap)
+    """
+    # ------------------------------------------------------------------
+    # 1. Build pivot tables from summary_df
+    # ------------------------------------------------------------------
+    pivot_r2 = summary_df.pivot_table(
+        index="model_name",
+        columns="target_key",
+        values="r2_mean",
+        aggfunc="mean"
+    )
+    pivot_rmse = summary_df.pivot_table(
+        index="model_name",
+        columns="target_key",
+        values="rmse_mean",
+        aggfunc="mean"
+    )
 
-def make_figure_3_rank_transportability(rank_mat: pd.DataFrame):
+    # Reorder models for consistent display
+    model_order = ["random_forest", "hist_gb", "mlp", "ridge", "dummy_mean"]
+    model_labels = {
+        "random_forest": "Random Forest",
+        "hist_gb": "HGB",
+        "mlp": "MLP",
+        "ridge": "Ridge",
+        "dummy_mean": "Dummy"
+    }
+    target_labels = {
+        "ch4_58": "CH$_4$\n5.8 bar",
+        "ch4_65": "CH$_4$\n65 bar",
+        "co2_0015": "CO$_2$\n0.015 bar",
+        "co2_015": "CO$_2$\n0.15 bar"
+    }
+
+    pivot_r2 = pivot_r2.reindex(model_order)
+    pivot_rmse = pivot_rmse.reindex(model_order)
+
+    pivot_r2.index = pivot_r2.index.map(model_labels)
+    pivot_rmse.index = pivot_rmse.index.map(model_labels)
+
+    pivot_r2.columns = pivot_r2.columns.map(target_labels)
+    pivot_rmse.columns = pivot_rmse.columns.map(target_labels)
+
+    # Save source data
+    save_figure_source(
+        pivot_r2.reset_index().rename(columns={"index": "model"}),
+        PATHS["figure_data_main"] / "Figure2_model_comparison_r2"
+    )
+    save_figure_source(
+        pivot_rmse.reset_index().rename(columns={"index": "model"}),
+        PATHS["figure_data_main"] / "Figure2_model_comparison_rmse"
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Create figure
+    # ------------------------------------------------------------------
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+
+    # --- Panel a: R2 ---
+    ax = axes[0]
+    im = ax.imshow(
+        pivot_r2.values,
+        cmap="Reds",
+        vmin=0.3,
+        vmax=1.0,
+        aspect="auto"
+    )
+    ax.set_title("a)", loc="left", fontweight="bold", fontsize=18, pad=15)
+    ax.set_title("Mean test $R^2$", loc="center", fontsize=16, pad=15)
+    ax.set_xticks(np.arange(len(pivot_r2.columns)))
+    ax.set_xticklabels(pivot_r2.columns, rotation=45, ha="right")
+    ax.set_yticks(np.arange(len(pivot_r2.index)))
+    ax.set_yticklabels(pivot_r2.index)
+
+    for i in range(pivot_r2.shape[0]):
+        for j in range(pivot_r2.shape[1]):
+            val = pivot_r2.iloc[i, j]
+            ax.text(j, i, f"{val:.2f}", ha="center", va="center",
+                    fontsize=16, fontweight="bold", color="black")
+
+    cbar = plt.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+    cbar.ax.tick_params(labelsize=14)
+
+    # --- Panel b: RMSE ---
+    ax = axes[1]
+    im = ax.imshow(
+        pivot_rmse.values,
+        cmap="Blues",
+        vmin=0,
+        vmax=8.0,
+        aspect="auto"
+    )
+    ax.set_title("b)", loc="left", fontweight="bold", fontsize=18, pad=15)
+    ax.set_title("Mean test RMSE", loc="center", fontsize=16, pad=15)
+    ax.set_xticks(np.arange(len(pivot_rmse.columns)))
+    ax.set_xticklabels(pivot_rmse.columns, rotation=45, ha="right")
+    ax.set_yticks(np.arange(len(pivot_rmse.index)))
+    ax.set_yticklabels(pivot_rmse.index)
+
+    for i in range(pivot_rmse.shape[0]):
+        for j in range(pivot_rmse.shape[1]):
+            val = pivot_rmse.iloc[i, j]
+            ax.text(j, i, f"{val:.2f}", ha="center", va="center",
+                    fontsize=16, fontweight="bold", color="black")
+
+    cbar = plt.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+    cbar.ax.tick_params(labelsize=14)
+
+    fig.tight_layout()
+    maybe_save_figure(fig, PATHS["figures_main"] / "Figure2_model_comparison")
+   
+def make_figure_4_rank_transportability(rank_mat: pd.DataFrame):
     rank_export = rank_mat.copy()
     rank_export.index.name = "target_key"
-    save_figure_source(rank_export.reset_index(), PATHS["figure_data_main"] / "Figure3_rank_transportability_matrix")
+    save_figure_source(rank_export.reset_index(), PATHS["figure_data_main"] / "Figure4_rank_transportability_matrix")
     fig, ax = plt.subplots(figsize=(6, 5))
-    add_heatmap(ax, rank_mat, "Figure 3. Cross-target ranking transportability", cmap="coolwarm", vmin=-1, vmax=1)
+    add_heatmap(ax, rank_mat, "Figure 4. Cross-target ranking transportability", cmap="coolwarm", vmin=-1, vmax=1)
     fig.tight_layout()
-    maybe_save_figure(fig, PATHS["figures_main"] / "Figure3_cross_target_ranking_transportability")
+    maybe_save_figure(fig, PATHS["figures_main"] / "Figure4_cross_target_ranking_transportability")
 
 
-def make_figure_5_transfer_gain_loss(transfer_summary_df: pd.DataFrame):
+def make_figure_6_transfer_gain_loss(transfer_summary_df: pd.DataFrame):
     if transfer_summary_df.empty:
         return
     plot_df = transfer_summary_df[transfer_summary_df["transfer_variant"].isin(["direct_transport", "pretrain_finetune"])].copy()
     plot_df["pair"] = plot_df["source_target"] + "→" + plot_df["target_target"]
     plot_df["label"] = plot_df["family_name"] + " | " + plot_df["transfer_variant"]
-    save_figure_source(plot_df, PATHS["figure_data_main"] / "Figure5_transfer_gain_loss_source")
+    save_figure_source(plot_df, PATHS["figure_data_main"] / "Figure6_transfer_gain_loss_source")
     fig, ax = plt.subplots(figsize=(14, 7))
     x = np.arange(len(plot_df))
     ax.bar(x, plot_df["delta_r2_vs_scratch"])
@@ -1426,29 +2174,29 @@ def make_figure_5_transfer_gain_loss(transfer_summary_df: pd.DataFrame):
     ax.set_xticks(x)
     ax.set_xticklabels(plot_df["pair"] + "\n" + plot_df["label"], rotation=90)
     ax.set_ylabel(r"$\Delta R^2$ vs scratch target training")
-    ax.set_title("Figure 5. Transfer gain/loss composite")
+    ax.set_title("Figure 6. Transfer gain/loss composite")
     fig.tight_layout()
-    maybe_save_figure(fig, PATHS["figures_main"] / "Figure5_transfer_gain_loss_composite")
+    maybe_save_figure(fig, PATHS["figures_main"] / "Figure6_transfer_gain_loss_composite")
 
 
-def make_figure_4_residual_overlap(residual_mat: pd.DataFrame):
+def make_figure_5_residual_overlap(residual_mat: pd.DataFrame):
     residual_export = residual_mat.copy()
     residual_export.index.name = "target_key"
-    save_figure_source(residual_export.reset_index(), PATHS["figure_data_main"] / "Figure4_residual_overlap_matrix")
+    save_figure_source(residual_export.reset_index(), PATHS["figure_data_main"] / "Figure5_residual_overlap_matrix")
     fig, ax = plt.subplots(figsize=(6, 5))
-    add_heatmap(ax, residual_mat, "Figure 4. Residual-structure overlap", cmap="coolwarm", vmin=-1, vmax=1)
+    add_heatmap(ax, residual_mat, "Figure 5. Residual-structure overlap", cmap="coolwarm", vmin=-1, vmax=1)
     fig.tight_layout()
-    maybe_save_figure(fig, PATHS["figures_main"] / "Figure4_residual_structure_overlap")
+    maybe_save_figure(fig, PATHS["figures_main"] / "Figure5_residual_structure_overlap")
 
 
-def make_figure_6_elite_overlap(elite_mat: pd.DataFrame):
+def make_figure_7_elite_overlap(elite_mat: pd.DataFrame):
     elite_export = elite_mat.copy()
     elite_export.index.name = "target_key"
-    save_figure_source(elite_export.reset_index(), PATHS["figure_data_main"] / "Figure6_elite_overlap_matrix")
+    save_figure_source(elite_export.reset_index(), PATHS["figure_data_main"] / "Figure7_elite_overlap_matrix")
     fig, ax = plt.subplots(figsize=(6, 5))
-    add_heatmap(ax, elite_mat, "Figure 6. Elite retrieval overlap", cmap="viridis", vmin=0, vmax=1)
+    add_heatmap(ax, elite_mat, "Figure 7. Elite retrieval overlap", cmap="viridis", vmin=0, vmax=1)
     fig.tight_layout()
-    maybe_save_figure(fig, PATHS["figures_main"] / "Figure6_elite_retrieval_overlap")
+    maybe_save_figure(fig, PATHS["figures_main"] / "Figure7_elite_retrieval_overlap")
 
 
 def make_si_figures(best_preds_df: pd.DataFrame, transfer_summary_df: pd.DataFrame, regime_result: Dict[str, Any] | None = None):
@@ -1504,7 +2252,7 @@ def build_manuscript_helper_tables(summary_df, rank_df, residual_df, transfer_su
     combo = rank_df.merge(residual_df, on=["target_a", "target_b"], how="outer")
     save_dataframe(combo, PATHS["tables"] / "table_3_cross_target_ranking_and_residual_summary", index=False)
     if not transfer_summary_df.empty:
-        compact = transfer_summary_df[transfer_summary_df["transfer_variant"].isin(["scratch_target", "direct_transport", "pretrain_finetune", "multi_target_joint"])].copy()
+        compact = transfer_summary_df[transfer_summary_df["transfer_variant"].isin(["scratch_target", "direct_transport", "pretrain_finetune", "independent_per_target_hgb"])].copy()
         save_dataframe(compact, PATHS["tables"] / "table_main_transfer_summary", index=False)
     if regime_result:
         regime_table = regime_result["top_loadings"].copy()
@@ -1546,6 +2294,30 @@ def write_run_manifest(raw_df, common_df, families, splits):
     }
     safe_json_dump(manifest, PATHS["metadata"] / "run_manifest.json")
 
+def collect_matched_eptd_rf_predictions(preds_df: pd.DataFrame):
+
+    matched = preds_df.loc[
+        (preds_df["descriptor_family"] == "enriched_plus_topology")
+        & (preds_df["model_name"] == "random_forest")
+    ].copy()
+
+    expected_targets = set(TARGETS.keys())
+    found_targets = set(matched["target_key"].unique())
+
+    if found_targets != expected_targets:
+        raise ValueError(
+            "Matched EPTD/RF predictions are incomplete. "
+            f"Expected {expected_targets}, got {found_targets}"
+        )
+
+    save_dataframe(
+        matched,
+        PATHS["predictions"] /
+        "matched_EPTD_RF_predictions",
+        index=False
+    )
+
+    return matched
 
 def main():
     start = time.time()
@@ -1589,7 +2361,33 @@ def main():
     rank_df, rank_mat = compute_rank_transportability(summary_df)
     best_df = pick_best_config_per_target(summary_df)
     best_preds_df = collect_best_predictions(preds_df, best_df)
-    residual_df, residual_mat = compute_residual_transportability(best_preds_df)
+
+    matched_preds_df = collect_matched_eptd_rf_predictions(
+        preds_df
+    )
+
+    # ============================================================
+    # PRIMARY RESIDUAL ANALYSIS
+    # Matched EPTD + Random Forest across all four targets
+    # ============================================================
+
+    residual_df, residual_mat = compute_residual_transportability(
+        matched_preds_df,
+        analysis_tag="matched_EPTD_RF_primary"
+    )
+
+    # ============================================================
+    # SENSITIVITY RESIDUAL ANALYSIS
+    # Original independently selected best configuration per target
+    # Retained for SI
+    # ============================================================
+
+    residual_best_df, residual_best_mat = (
+        compute_residual_transportability(
+            best_preds_df,
+            analysis_tag="best_per_target_sensitivity"
+        )
+    )
     log_stage_done("Summarize in-domain results and compute transportability", t_stage)
 
     t_stage = log_stage("Run transfer experiments")
@@ -1597,10 +2395,44 @@ def main():
     transfer_summary_df = summarize_transfer_results(transfer_df)
     log_stage_done("Run transfer experiments", t_stage)
 
-    t_stage = log_stage("Elite overlap and descriptor regime analysis")
-    elite_df, elite_mat = compute_elite_retrieval_overlap(best_preds_df)
-    regime_result = run_descriptor_regime_analysis(common_df, families)
-    log_stage_done("Elite overlap and descriptor regime analysis", t_stage)
+    t_stage = log_stage(
+        "Elite overlap and descriptor regime analysis"
+    )
+
+    # ============================================================
+    # PRIMARY ELITE ANALYSIS
+    # Matched EPTD + Random Forest for all four targets
+    # ============================================================
+
+    elite_df, elite_mat = compute_elite_retrieval_overlap(
+        matched_preds_df,
+        analysis_tag="matched_EPTD_RF_primary"
+    )
+
+    # ============================================================
+    # SENSITIVITY ANALYSIS
+    # Original best-per-target configurations
+    # Keep for SI / robustness check
+    # ============================================================
+
+    elite_best_df, elite_best_mat = compute_elite_retrieval_overlap(
+        best_preds_df,
+        analysis_tag="best_per_target_sensitivity"
+    )
+
+    # ============================================================
+    # Descriptor regime analysis
+    # ============================================================
+
+    regime_result = run_descriptor_regime_analysis(
+        common_df,
+        families
+    )
+
+    log_stage_done(
+        "Elite overlap and descriptor regime analysis",
+        t_stage
+    )
 
     t_stage = log_stage("Fit best full-data models and helper tables")
     fit_best_models_on_full_data(common_df, best_df, families)
@@ -1609,12 +2441,13 @@ def main():
 
     t_stage = log_stage("Render manuscript and SI figures plus source CSVs")
     make_figure_1_relationship_map(common_df)
-    make_figure_2_benchmark_matrix(summary_df)
-    make_figure_3_rank_transportability(rank_mat)
-    make_figure_5_transfer_gain_loss(transfer_summary_df)
-    make_figure_4_residual_overlap(residual_mat)
-    make_figure_6_elite_overlap(elite_mat)
-    make_figure_7_descriptor_regimes(regime_result)
+    make_figure_2_model_comparison(summary_df)
+    make_figure_3_benchmark_matrix(summary_df)
+    make_figure_4_rank_transportability(rank_mat)
+    make_figure_6_transfer_gain_loss(transfer_summary_df)
+    make_figure_5_residual_overlap(residual_mat)
+    make_figure_7_elite_overlap(elite_mat)
+    make_figure_8_descriptor_regimes(regime_result)
     make_si_figures(best_preds_df, transfer_summary_df, regime_result)
     log_stage_done("Render manuscript and SI figures plus source CSVs", t_stage)
 
