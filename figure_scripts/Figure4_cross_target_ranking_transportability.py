@@ -12,7 +12,7 @@ matplotlib.rcParams['font.family'] = 'Arial'
 matplotlib.rcParams['font.size'] = 10
 
 # Define paths
-file_path = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\results\figure_data\main_figures\Figure3_rank_transportability_matrix.csv")
+file_path = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\results\figure_data\main_figures\Figure4_rank_transportability_matrix.csv")
 output_dir = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\Exclusive_Outputs\figures")
 
 
