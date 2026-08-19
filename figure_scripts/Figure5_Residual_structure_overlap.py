@@ -11,7 +11,7 @@ matplotlib.rcParams['font.family'] = 'Arial'
 matplotlib.rcParams['font.size'] = 10
 
 # Define paths
-file_path = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\results\figure_data\main_figures\Figure4_residual_overlap_matrix.csv")
+file_path = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\results\figure_data\main_figures\Figure5_residual_overlap_matrix.csv")
 output_dir = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\Exclusive_Outputs\figures")
 
 # Create output directory if it doesn't exist
@@ -72,12 +72,12 @@ for text in heatmap.texts:
 plt.tight_layout()
 
 # Save the figure
-output_path = output_dir / 'Figure4_Residual_structure_overlap.png'
+output_path = output_dir / 'Figure5_Residual_structure_overlap.png'
 plt.savefig(output_path, dpi=300, bbox_inches='tight')
 print(f"Figure saved to: {output_path}")
 
 # Also save as PDF
-output_path_pdf = output_dir / 'Figure4_Residual_structure_overlap.pdf'
+output_path_pdf = output_dir / 'Figure5_Residual_structure_overlap.pdf'
 plt.savefig(output_path_pdf, bbox_inches='tight')
 print(f"PDF version saved to: {output_path_pdf}")
 
