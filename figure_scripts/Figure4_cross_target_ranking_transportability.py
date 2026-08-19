@@ -1,5 +1,5 @@
 """
-Figure 3 : Cross-target ranking transportability
+Figure 4 : Cross-target ranking transportability
 """
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -78,12 +78,12 @@ for text in heatmap.texts:
 plt.tight_layout()
 
 # Save the figure
-output_path = output_dir / 'Figure3_cross_target_ranking_transportability.png'
+output_path = output_dir / 'Figure4_cross_target_ranking_transportability.png'
 plt.savefig(output_path, dpi=300, bbox_inches='tight')
 print(f"Figure saved to: {output_path}")
 
 # Also save as PDF
-output_path_pdf = output_dir / 'Figure3_cross_target_ranking_transportability.pdf'
+output_path_pdf = output_dir / 'Figure4_cross_target_ranking_transportability.pdf'
 plt.savefig(output_path_pdf, bbox_inches='tight')
 print(f"PDF version saved to: {output_path_pdf}")
 
