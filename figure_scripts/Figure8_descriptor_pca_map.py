@@ -1,5 +1,5 @@
 """
-Figure 7 – Descriptor-space PCA map and top descriptor loadings
+Figure 8 – Descriptor-space PCA map and top descriptor loadings
 """
 
 import pandas as pd
@@ -26,8 +26,8 @@ output_dir      = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outpu
 figure_data_dir = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\results\figure_data\main_figures")
 output_dir.mkdir(parents=True, exist_ok=True)
 
-proj_csv = figure_data_dir / "Figure7_descriptor_pca_projection.csv"
-load_csv = figure_data_dir / "Figure7_descriptor_pca_top_loadings.csv"
+proj_csv = figure_data_dir / "Figure8_descriptor_pca_projection.csv"
+load_csv = figure_data_dir / "Figure8_descriptor_pca_top_loadings.csv"
 
 # ── Load data ────────────────────────────────────────────────────────────────
 df_proj = pd.read_csv(proj_csv)
