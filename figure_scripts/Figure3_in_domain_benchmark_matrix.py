@@ -98,10 +98,10 @@ def save_csv_safe(df, filepath):
 def create_publication_figure(data_dir, output_dir):
 
     targets_config = [
-        {'data_path': data_dir / "Figure2_co2_0015_bar_data.csv", 'title': 'CO$_2$ (0.015 bar)', 'panel': 'a'},
-        {'data_path': data_dir / "Figure2_co2_015_bar_data.csv", 'title': 'CO$_2$ (0.15 bar)', 'panel': 'b'},
-        {'data_path': data_dir / "Figure2_ch4_58_bar_data.csv", 'title': 'CH$_4$ (5.8 bar)', 'panel': 'c'},
-        {'data_path': data_dir / "Figure2_ch4_65_bar_data.csv", 'title': 'CH$_4$ (65 bar)', 'panel': 'd'}
+        {'data_path': data_dir / "Figure3_co2_0015_bar_data.csv", 'title': 'CO$_2$ (0.015 bar)', 'panel': 'a'},
+        {'data_path': data_dir / "Figure3_co2_015_bar_data.csv", 'title': 'CO$_2$ (0.15 bar)', 'panel': 'b'},
+        {'data_path': data_dir / "Figure3_ch4_58_bar_data.csv", 'title': 'CH$_4$ (5.8 bar)', 'panel': 'c'},
+        {'data_path': data_dir / "Figure3_ch4_65_bar_data.csv", 'title': 'CH$_4$ (65 bar)', 'panel': 'd'}
     ]
 
     fig = plt.figure(figsize=(22, 14))
