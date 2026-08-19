@@ -1,5 +1,5 @@
 """
-Figure6: Elite-retrieval overlap
+Figure7: Elite-retrieval overlap
 """
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -12,7 +12,7 @@ matplotlib.rcParams['font.family'] = 'Arial'
 matplotlib.rcParams['font.size'] = 10
 
 # Define paths
-file_path = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\results\figure_data\main_figures\Figure6_elite_overlap_matrix.csv")
+file_path = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\results\figure_data\main_figures\Figure7_elite_overlap_matrix.csv")
 output_dir = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\Exclusive_Outputs\figures")
 
 # Create output directory if it doesn't exist
@@ -78,12 +78,12 @@ for text in heatmap.texts:
 plt.tight_layout()
 
 # Save the figure
-output_path = output_dir / 'Fig6_Elite-retrieval overlap.png'
+output_path = output_dir / 'Fig7_Elite-retrieval overlap.png'
 plt.savefig(output_path, dpi=300, bbox_inches='tight')
 print(f"Figure saved to: {output_path}")
 
 # Also save as PDF
-output_path_pdf = output_dir / 'Fig6_Elite-retrieval overlap.pdf'
+output_path_pdf = output_dir / 'Fig7_Elite-retrieval overlap.pdf'
 plt.savefig(output_path_pdf, bbox_inches='tight')
 print(f"PDF version saved to: {output_path_pdf}")
 
