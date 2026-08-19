@@ -1,5 +1,5 @@
 """
-Figure 5 – Transfer gain / loss composite (ΔR² vs scratch target training).
+Figure 6 – Transfer gain / loss composite (ΔR² vs scratch target training).
 """
 
 import pandas as pd
@@ -15,7 +15,7 @@ output_dir = Path(r"C:\Me2\python\MCO2\target_transferability_lighter_outputs\Ex
 output_dir.mkdir(parents=True, exist_ok=True)
 
 
-df = pd.read_csv(data_dir / "Figure5_transfer_gain_loss_source.csv")
+df = pd.read_csv(data_dir / "Figure6_transfer_gain_loss_source.csv")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 1.  Clean and prepare data
